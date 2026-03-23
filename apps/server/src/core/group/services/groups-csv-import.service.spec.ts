@@ -28,6 +28,10 @@ describe('GroupsCsvImportService', () => {
       transaction: () => ({
         execute: async (fn: any) => fn(mockDb),
       }),
+      selectFrom: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      execute: jest.fn().mockResolvedValue([]),
       updateTable: jest.fn().mockReturnValue({
         set: jest.fn().mockReturnValue({
           where: jest.fn().mockReturnValue({
@@ -155,11 +159,11 @@ describe('GroupsCsvImportService', () => {
 
   describe('duplicate handling', () => {
     it('should update existing group instead of skipping', async () => {
-      mockGroupRepo.findByName.mockResolvedValue({
-        id: 'existing-1',
-        name: 'Engineering',
-        isDefault: false,
-      });
+      // preloadData returns: groups, users, groupUsers
+      mockDb.execute
+        .mockResolvedValueOnce([{ id: 'existing-1', name: 'Engineering', isDefault: false }])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
 
       const csv = 'name,description\nEngineering,Updated description\n';
       const result = await service.importGroupsCsv(
@@ -171,11 +175,10 @@ describe('GroupsCsvImportService', () => {
     });
 
     it('should not update default group description', async () => {
-      mockGroupRepo.findByName.mockResolvedValue({
-        id: 'default-1',
-        name: 'Everyone',
-        isDefault: true,
-      });
+      mockDb.execute
+        .mockResolvedValueOnce([{ id: 'default-1', name: 'Everyone', isDefault: true }])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
 
       const csv = 'name,description\nEveryone,New description\n';
       const result = await service.importGroupsCsv(
@@ -188,7 +191,11 @@ describe('GroupsCsvImportService', () => {
 
   describe('member mapping', () => {
     it('should add existing users as group members', async () => {
-      mockUserRepo.findByEmail.mockResolvedValue({ id: 'user-found' });
+      // preloadData returns: groups, users, groupUsers
+      mockDb.execute
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ id: 'user-found', email: 'alice@test.com' }])
+        .mockResolvedValueOnce([]);
 
       const csv = 'name,description,members\nEngineering,team,alice@test.com\n';
       const result = await service.importGroupsCsv(
@@ -199,7 +206,11 @@ describe('GroupsCsvImportService', () => {
     });
 
     it('should skip non-existing users in members', async () => {
-      mockUserRepo.findByEmail.mockResolvedValue(null);
+      // preloadData: no groups, no users, no groupUsers
+      mockDb.execute
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
 
       const csv = 'name,description,members\nEngineering,team,nonexist@test.com\n';
       const result = await service.importGroupsCsv(
@@ -210,9 +221,14 @@ describe('GroupsCsvImportService', () => {
     });
 
     it('should handle semicolon-separated multiple members', async () => {
-      mockUserRepo.findByEmail
-        .mockResolvedValueOnce({ id: 'user-1' })
-        .mockResolvedValueOnce({ id: 'user-2' });
+      // preloadData: no groups, 2 users, no groupUsers
+      mockDb.execute
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          { id: 'user-1', email: 'a@test.com' },
+          { id: 'user-2', email: 'b@test.com' },
+        ])
+        .mockResolvedValueOnce([]);
 
       const csv = 'name,description,members\nEngineering,team,a@test.com;b@test.com\n';
       const result = await service.importGroupsCsv(

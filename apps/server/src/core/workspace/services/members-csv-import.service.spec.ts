@@ -173,11 +173,11 @@ describe('MembersCsvImportService', () => {
 
   describe('duplicate handling', () => {
     it('should update existing user instead of skipping', async () => {
-      mockUserRepo.findByEmail.mockResolvedValue({
-        id: 'existing-1',
-        name: 'Old Name',
-        role: 'member',
-      });
+      // preloadData returns: users, groups, groupUsers (3 execute calls)
+      mockDb.execute
+        .mockResolvedValueOnce([{ id: 'existing-1', email: 'alice@test.com', name: 'Old Name', role: 'member' }])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
 
       const csv = 'email,name,role\nalice@test.com,New Name,admin\n';
       const result = await service.importMembersCsv(
@@ -189,11 +189,10 @@ describe('MembersCsvImportService', () => {
     });
 
     it('should not change owner role via CSV', async () => {
-      mockUserRepo.findByEmail.mockResolvedValue({
-        id: 'owner-1',
-        name: 'Owner',
-        role: 'owner',
-      });
+      mockDb.execute
+        .mockResolvedValueOnce([{ id: 'owner-1', email: 'owner@test.com', name: 'Owner', role: 'owner' }])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
 
       const csv = 'email,name,role\nowner@test.com,Owner Updated,member\n';
       const result = await service.importMembersCsv(

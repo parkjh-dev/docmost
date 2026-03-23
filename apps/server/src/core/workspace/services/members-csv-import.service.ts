@@ -26,6 +26,13 @@ export interface CsvImportResult {
   errors: Array<{ row: number; email?: string; reason: string }>;
 }
 
+interface PreloadedData {
+  usersByEmail: Map<string, { id: string; name: string; role: string }>;
+  groupsByName: Map<string, { id: string; isDefault: boolean }>;
+  groupUserSet: Set<string>; // "userId:groupId"
+  defaultGroupId: string | null;
+}
+
 @Injectable()
 export class MembersCsvImportService {
   private readonly logger = new Logger(MembersCsvImportService.name);
@@ -124,6 +131,49 @@ export class MembersCsvImportService {
     return null;
   }
 
+  /**
+   * Preload all users, groups, and group memberships for the workspace
+   * to avoid N+1 queries during row processing.
+   */
+  private async preloadData(workspaceId: string, trx: any): Promise<PreloadedData> {
+    const [users, groups, groupUsers] = await Promise.all([
+      trx
+        .selectFrom('users')
+        .select(['id', 'email', 'name', 'role'])
+        .where('workspaceId', '=', workspaceId)
+        .where('deletedAt', 'is', null)
+        .execute(),
+      trx
+        .selectFrom('groups')
+        .select(['id', 'name', 'isDefault'])
+        .where('workspaceId', '=', workspaceId)
+        .execute(),
+      trx
+        .selectFrom('groupUsers')
+        .select(['userId', 'groupId'])
+        .execute(),
+    ]);
+
+    const usersByEmail = new Map<string, { id: string; name: string; role: string }>();
+    for (const u of users) {
+      usersByEmail.set(u.email.toLowerCase(), { id: u.id, name: u.name, role: u.role });
+    }
+
+    const groupsByName = new Map<string, { id: string; isDefault: boolean }>();
+    let defaultGroupId: string | null = null;
+    for (const g of groups) {
+      groupsByName.set(g.name.toLowerCase(), { id: g.id, isDefault: g.isDefault });
+      if (g.isDefault) defaultGroupId = g.id;
+    }
+
+    const groupUserSet = new Set<string>();
+    for (const gu of groupUsers) {
+      groupUserSet.add(`${gu.userId}:${gu.groupId}`);
+    }
+
+    return { usersByEmail, groupsByName, groupUserSet, defaultGroupId };
+  }
+
   private async processWithRollback(
     records: Record<string, string>[],
     workspaceId: string,
@@ -141,8 +191,10 @@ export class MembersCsvImportService {
     }
 
     await executeTx(this.db, async (trx) => {
+      const data = await this.preloadData(workspaceId, trx);
+
       for (let i = 0; i < records.length; i++) {
-        await this.processRow(records[i], i + 2, workspaceId, result, trx);
+        await this.processRow(records[i], i + 2, workspaceId, result, trx, data);
         if (result.failed > 0) {
           throw new BadRequestException(
             `Row ${result.errors[0].row}: ${result.errors[0].reason}`,
@@ -163,6 +215,9 @@ export class MembersCsvImportService {
     options: CsvImportOptions,
     result: CsvImportResult,
   ) {
+    // Preload once outside individual transactions
+    const data = await this.preloadData(workspaceId, this.db);
+
     for (let i = 0; i < records.length; i++) {
       const error = this.validateRow(records[i]);
       if (error) {
@@ -177,7 +232,7 @@ export class MembersCsvImportService {
 
       try {
         await executeTx(this.db, async (trx) => {
-          await this.processRow(records[i], i + 2, workspaceId, result, trx);
+          await this.processRow(records[i], i + 2, workspaceId, result, trx, data);
         });
       } catch (err: any) {
         result.failed++;
@@ -202,6 +257,7 @@ export class MembersCsvImportService {
     workspaceId: string,
     result: CsvImportResult,
     trx: any,
+    data: PreloadedData,
   ) {
     const email = row.email.trim().toLowerCase();
     const name = row.name?.trim() || email.split('@')[0];
@@ -213,9 +269,7 @@ export class MembersCsvImportService {
           .filter(Boolean)
       : [];
 
-    const existingUser = await this.userRepo.findByEmail(email, workspaceId, {
-      trx,
-    });
+    const existingUser = data.usersByEmail.get(email);
 
     if (existingUser) {
       // Update existing user
@@ -230,10 +284,13 @@ export class MembersCsvImportService {
 
       if (Object.keys(updates).length > 0) {
         await this.userRepo.updateUser(updates, existingUser.id, workspaceId, trx);
+        // Update cache
+        if (updates.name) existingUser.name = updates.name;
+        if (updates.role) existingUser.role = updates.role;
       }
 
       // Sync group memberships
-      await this.syncUserGroups(existingUser.id, groupNames, workspaceId, trx);
+      await this.syncUserGroups(existingUser.id, groupNames, trx, data);
 
       result.updated++;
       return;
@@ -253,15 +310,25 @@ export class MembersCsvImportService {
       trx,
     );
 
+    // Update cache with new user
+    data.usersByEmail.set(email, { id: newUser.id, name, role });
+
     // Add to default group
-    await this.groupUserRepo.addUserToDefaultGroup(
-      newUser.id,
-      workspaceId,
-      trx,
-    );
+    if (data.defaultGroupId) {
+      const key = `${newUser.id}:${data.defaultGroupId}`;
+      if (!data.groupUserSet.has(key)) {
+        await this.groupUserRepo.insertGroupUser(
+          { userId: newUser.id, groupId: data.defaultGroupId },
+          trx,
+        );
+        data.groupUserSet.add(key);
+      }
+    } else {
+      await this.groupUserRepo.addUserToDefaultGroup(newUser.id, workspaceId, trx);
+    }
 
     // Add to specified groups
-    await this.syncUserGroups(newUser.id, groupNames, workspaceId, trx);
+    await this.syncUserGroups(newUser.id, groupNames, trx, data);
 
     result.created++;
   }
@@ -269,24 +336,19 @@ export class MembersCsvImportService {
   private async syncUserGroups(
     userId: string,
     groupNames: string[],
-    workspaceId: string,
     trx: any,
+    data: PreloadedData,
   ) {
     for (const groupName of groupNames) {
-      const group = await this.groupRepo.findByName(groupName, workspaceId, {
-        trx,
-      });
+      const group = data.groupsByName.get(groupName.toLowerCase());
       if (group && !group.isDefault) {
-        const existing = await this.groupUserRepo.getGroupUserById(
-          userId,
-          group.id,
-          trx,
-        );
-        if (!existing) {
+        const key = `${userId}:${group.id}`;
+        if (!data.groupUserSet.has(key)) {
           await this.groupUserRepo.insertGroupUser(
             { userId, groupId: group.id },
             trx,
           );
+          data.groupUserSet.add(key);
         }
       }
     }
