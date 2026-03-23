@@ -1,5 +1,1 @@
 email,name,role,groups
-alice@example.com,Alice Smith,admin,Engineering;Design
-bob@example.com,Bob Jones,member,Engineering
-charlie@example.com,Charlie Brown,member,Design
-dave@example.com,Dave Wilson,admin,Admins;Engineering
