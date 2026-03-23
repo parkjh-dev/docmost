@@ -11,6 +11,7 @@ import {
 } from "../types/workspace.types";
 import { IPagination, QueryParams } from "@/lib/types.ts";
 import { ISetupWorkspace } from "@/features/auth/types/auth.types.ts";
+import { saveAs } from "file-saver";
 
 export async function getWorkspace(): Promise<IWorkspace> {
   const req = await api.post<IWorkspace>("/workspace/info");
@@ -120,5 +121,42 @@ export async function createWorkspace(
 
 export async function getAppVersion(): Promise<IVersion> {
   const req = await api.post("/version");
+  return req.data;
+}
+
+export async function exportMembersCsv(data: {
+  includeGroups?: boolean;
+}): Promise<void> {
+  const req = await api.post("/workspace/members/export", data, {
+    responseType: "blob",
+  });
+
+  const fileName = req?.headers["content-disposition"]
+    ?.split("filename=")[1]
+    ?.replace(/"/g, "");
+
+  const decodedFileName = fileName
+    ? decodeURIComponent(fileName)
+    : "members.csv";
+
+  saveAs(req.data, decodedFileName);
+}
+
+export interface ICsvImportResult {
+  total: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+  errors?: Array<{ row: number; email?: string; reason: string }>;
+}
+
+export async function importMembersCsv(file: File): Promise<ICsvImportResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const req = await api.post("/workspace/members/import", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
   return req.data;
 }

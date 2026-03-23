@@ -2,6 +2,7 @@ import api from "@/lib/api-client";
 import { IGroup } from "@/features/group/types/group.types";
 import { IPagination, QueryParams } from "@/lib/types.ts";
 import { IUser } from "@/features/user/types/user.types.ts";
+import { saveAs } from "file-saver";
 
 export async function getGroups(
   params?: QueryParams,
@@ -49,4 +50,39 @@ export async function removeGroupMember(data: {
   userId: string;
 }): Promise<void> {
   await api.post("/groups/members/remove", data);
+}
+
+export async function exportGroupsCsv(): Promise<void> {
+  const req = await api.post("/groups/export", {}, {
+    responseType: "blob",
+  });
+
+  const fileName = req?.headers["content-disposition"]
+    ?.split("filename=")[1]
+    ?.replace(/"/g, "");
+
+  const decodedFileName = fileName
+    ? decodeURIComponent(fileName)
+    : "groups.csv";
+
+  saveAs(req.data, decodedFileName);
+}
+
+export interface ICsvImportResult {
+  total: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+  errors?: Array<{ row: number; name?: string; reason: string }>;
+}
+
+export async function importGroupsCsv(file: File): Promise<ICsvImportResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const req = await api.post("/groups/import", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return req.data;
 }
