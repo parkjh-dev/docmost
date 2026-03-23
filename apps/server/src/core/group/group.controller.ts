@@ -6,6 +6,7 @@ import {
   HttpCode,
   HttpStatus,
   ForbiddenException,
+  Res,
 } from '@nestjs/common';
 import { GroupService } from './services/group.service';
 import { CreateGroupDto } from './dto/create-group.dto';
@@ -19,6 +20,8 @@ import { RemoveGroupUserDto } from './dto/remove-group-user.dto';
 import { UpdateGroupDto } from './dto/update-group.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { User, Workspace } from '@docmost/db/types/entity.types';
+import { GroupsCsvExportService } from './services/groups-csv-export.service';
+import { FastifyReply } from 'fastify';
 import WorkspaceAbilityFactory from '../casl/abilities/workspace-ability.factory';
 import {
   WorkspaceCaslAction,
@@ -31,6 +34,7 @@ export class GroupController {
   constructor(
     private readonly groupService: GroupService,
     private readonly groupUserService: GroupUserService,
+    private readonly groupsCsvExportService: GroupsCsvExportService,
     private readonly workspaceAbility: WorkspaceAbilityFactory,
   ) {}
 
@@ -61,6 +65,31 @@ export class GroupController {
       throw new ForbiddenException();
     }
     return this.groupService.getGroupInfo(groupIdDto.groupId, workspace.id);
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('export')
+  async exportGroupsCsv(
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+    @Res() res: FastifyReply,
+  ) {
+    const ability = this.workspaceAbility.createForUser(user, workspace);
+    if (
+      ability.cannot(WorkspaceCaslAction.Manage, WorkspaceCaslSubject.Group)
+    ) {
+      throw new ForbiddenException();
+    }
+
+    const csv = await this.groupsCsvExportService.exportGroupsCsv(workspace.id);
+
+    const fileName = 'groups.csv';
+    res.headers({
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${fileName}"`,
+    });
+
+    res.send(csv);
   }
 
   @HttpCode(HttpStatus.OK)

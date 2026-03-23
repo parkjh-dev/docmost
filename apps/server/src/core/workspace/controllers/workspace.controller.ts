@@ -31,6 +31,7 @@ import {
   WorkspaceCaslSubject,
 } from '../../casl/interfaces/workspace-ability.type';
 import { FastifyReply } from 'fastify';
+import { MembersCsvExportService } from '../services/members-csv-export.service';
 import { EnvironmentService } from '../../../integrations/environment/environment.service';
 import { LicenseCheckService } from '../../../integrations/environment/license-check.service';
 import { CheckHostnameDto } from '../dto/check-hostname.dto';
@@ -45,6 +46,7 @@ export class WorkspaceController {
     private readonly workspaceInvitationService: WorkspaceInvitationService,
     private readonly workspaceAbility: WorkspaceAbilityFactory,
     private readonly workspaceRepo: WorkspaceRepo,
+    private readonly membersCsvExportService: MembersCsvExportService,
     private environmentService: EnvironmentService,
     private licenseCheckService: LicenseCheckService,
   ) {}
@@ -125,6 +127,35 @@ export class WorkspaceController {
     }
 
     return this.workspaceService.getWorkspaceUsers(workspace.id, pagination);
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('members/export')
+  async exportMembersCsv(
+    @Body() body: { includeGroups?: boolean },
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+    @Res() res: FastifyReply,
+  ) {
+    const ability = this.workspaceAbility.createForUser(user, workspace);
+    if (
+      ability.cannot(WorkspaceCaslAction.Manage, WorkspaceCaslSubject.Member)
+    ) {
+      throw new ForbiddenException();
+    }
+
+    const csv = await this.membersCsvExportService.exportMembersCsv(
+      workspace.id,
+      body.includeGroups ?? true,
+    );
+
+    const fileName = 'members.csv';
+    res.headers({
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${fileName}"`,
+    });
+
+    res.send(csv);
   }
 
   @HttpCode(HttpStatus.OK)
