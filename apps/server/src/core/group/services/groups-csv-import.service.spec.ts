@@ -28,6 +28,15 @@ describe('GroupsCsvImportService', () => {
       transaction: () => ({
         execute: async (fn: any) => fn(mockDb),
       }),
+      updateTable: jest.fn().mockReturnValue({
+        set: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              execute: jest.fn().mockResolvedValue(undefined),
+            }),
+          }),
+        }),
+      }),
     };
 
     service = new GroupsCsvImportService(
@@ -158,7 +167,7 @@ describe('GroupsCsvImportService', () => {
       );
       expect(result.updated).toBe(1);
       expect(result.created).toBe(0);
-      expect(mockGroupRepo.update).toHaveBeenCalled();
+      expect(mockDb.updateTable).toHaveBeenCalledWith('groups');
     });
 
     it('should not update default group description', async () => {
@@ -173,7 +182,7 @@ describe('GroupsCsvImportService', () => {
         csv, workspaceId, userId, false,
       );
       expect(result.updated).toBe(1);
-      expect(mockGroupRepo.update).not.toHaveBeenCalled();
+      expect(mockDb.updateTable).not.toHaveBeenCalled();
     });
   });
 

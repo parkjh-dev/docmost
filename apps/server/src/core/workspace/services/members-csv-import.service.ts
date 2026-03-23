@@ -93,6 +93,16 @@ export class MembersCsvImportService {
         'Invalid CSV format. This looks like a groups CSV. Please use the groups import instead.',
       );
     }
+
+    // Check for duplicate emails within CSV
+    const emails = records.map((r) => r.email?.trim().toLowerCase()).filter(Boolean);
+    const duplicates = emails.filter((e, i) => emails.indexOf(e) !== i);
+    if (duplicates.length > 0) {
+      const unique = [...new Set(duplicates)];
+      throw new BadRequestException(
+        `Duplicate emails found in CSV: ${unique.join(', ')}`,
+      );
+    }
   }
 
   private validateRow(row: Record<string, string>): string | null {

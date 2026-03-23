@@ -73,6 +73,13 @@ describe('MembersCsvImportService', () => {
       ).rejects.toThrow('This looks like a groups CSV');
     });
 
+    it('should reject duplicate emails within CSV', async () => {
+      const csv = 'email,name,role\nalice@test.com,Alice,admin\nalice@test.com,Alice2,member\n';
+      await expect(
+        service.importMembersCsv(csv, workspaceId, actorId, defaultOptions),
+      ).rejects.toThrow('Duplicate emails found in CSV');
+    });
+
     it('should reject invalid email format', async () => {
       const csv = 'email,name,role\nbad-email,Alice,member\n';
       const result = await service.importMembersCsv(

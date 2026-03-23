@@ -72,7 +72,6 @@ export interface ICsvImportResult {
   total: number;
   created: number;
   updated: number;
-  skipped: number;
   failed: number;
   errors?: Array<{ row: number; name?: string; reason: string }>;
 }

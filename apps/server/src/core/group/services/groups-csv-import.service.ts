@@ -15,7 +15,6 @@ export interface CsvImportResult {
   total: number;
   created: number;
   updated: number;
-  skipped: number;
   failed: number;
   errors: Array<{ row: number; name?: string; reason: string }>;
 }
@@ -44,7 +43,6 @@ export class GroupsCsvImportService {
       total: records.length,
       created: 0,
       updated: 0,
-      skipped: 0,
       failed: 0,
       errors: [],
     };
@@ -184,7 +182,12 @@ export class GroupsCsvImportService {
     if (existingGroup) {
       // Update existing group (skip default group)
       if (!existingGroup.isDefault && description !== undefined) {
-        await this.groupRepo.update({ description }, existingGroup.id, workspaceId);
+        await trx
+          .updateTable('groups')
+          .set({ description, updatedAt: new Date() })
+          .where('id', '=', existingGroup.id)
+          .where('workspaceId', '=', workspaceId)
+          .execute();
       }
 
       // Sync members
