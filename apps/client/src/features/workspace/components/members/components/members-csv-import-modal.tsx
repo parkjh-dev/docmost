@@ -10,7 +10,7 @@ import {
 import { useRef, useState } from "react";
 import { notifications } from "@mantine/notifications";
 import { useTranslation } from "react-i18next";
-import { IconCheck, IconUpload, IconX } from "@tabler/icons-react";
+import { IconCheck, IconDownload, IconUpload, IconX } from "@tabler/icons-react";
 import { importMembersCsv } from "@/features/workspace/services/workspace-service";
 import { queryClient } from "@/main.tsx";
 
@@ -137,6 +137,19 @@ export default function MembersCsvImportModal({
                 </Button>
               )}
             </FileButton>
+          </Group>
+
+          <Group justify="center" mb="md">
+            <Button
+              component="a"
+              href="/templates/users-import-template.csv"
+              download="users-import-template.csv"
+              variant="subtle"
+              size="xs"
+              leftSection={<IconDownload size={14} />}
+            >
+              {t("Download template")}
+            </Button>
           </Group>
 
           <Checkbox

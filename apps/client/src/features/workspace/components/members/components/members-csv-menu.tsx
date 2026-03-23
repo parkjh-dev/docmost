@@ -63,15 +63,6 @@ export default function MembersCsvMenu() {
           >
             {isExporting ? t("Exporting...") : t("Export CSV")}
           </Menu.Item>
-          <Menu.Divider />
-          <Menu.Item
-            component="a"
-            href="/templates/users-import-template.csv"
-            download="users-import-template.csv"
-            leftSection={<IconFileTypeCsv size={16} />}
-          >
-            {t("Download template")}
-          </Menu.Item>
         </Menu.Dropdown>
       </Menu>
 

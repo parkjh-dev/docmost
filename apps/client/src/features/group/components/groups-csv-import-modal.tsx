@@ -10,7 +10,7 @@ import {
 import { useRef, useState } from "react";
 import { notifications } from "@mantine/notifications";
 import { useTranslation } from "react-i18next";
-import { IconCheck, IconUpload, IconX } from "@tabler/icons-react";
+import { IconCheck, IconDownload, IconUpload, IconX } from "@tabler/icons-react";
 import { importGroupsCsv } from "@/features/group/services/group-service";
 import { queryClient } from "@/main.tsx";
 
@@ -134,6 +134,19 @@ export default function GroupsCsvImportModal({
                 </Button>
               )}
             </FileButton>
+          </Group>
+
+          <Group justify="center" mb="md">
+            <Button
+              component="a"
+              href="/templates/groups-import-template.csv"
+              download="groups-import-template.csv"
+              variant="subtle"
+              size="xs"
+              leftSection={<IconDownload size={14} />}
+            >
+              {t("Download template")}
+            </Button>
           </Group>
 
           <Checkbox
