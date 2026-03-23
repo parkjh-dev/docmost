@@ -1,5 +1,6 @@
 import {
   Button,
+  Checkbox,
   Divider,
   FileButton,
   Group,
@@ -11,6 +12,7 @@ import { notifications } from "@mantine/notifications";
 import { useTranslation } from "react-i18next";
 import { IconCheck, IconUpload, IconX } from "@tabler/icons-react";
 import { importMembersCsv } from "@/features/workspace/services/workspace-service";
+import { queryClient } from "@/main.tsx";
 
 interface MembersCsvImportModalProps {
   opened: boolean;
@@ -23,6 +25,8 @@ export default function MembersCsvImportModal({
 }: MembersCsvImportModalProps) {
   const { t } = useTranslation();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [stopOnError, setStopOnError] = useState<boolean>(false);
+  const [deactivateNotInCsv, setDeactivateNotInCsv] = useState<boolean>(false);
   const [isImporting, setIsImporting] = useState<boolean>(false);
   const resetRef = useRef<() => void>(null);
 
@@ -46,17 +50,18 @@ export default function MembersCsvImportModal({
     });
 
     try {
-      const result = await importMembersCsv(selectedFile);
+      const result = await importMembersCsv(selectedFile, { stopOnError, deactivateNotInCsv });
 
       notifications.update({
         id: "csv-import-members",
         color: "teal",
         title: t("Import complete"),
         message: t(
-          "Created: {{created}}, Updated: {{updated}}, Failed: {{failed}}",
+          "Created: {{created}}, Updated: {{updated}}, Deactivated: {{deactivated}}, Failed: {{failed}}",
           {
             created: result.created ?? 0,
             updated: result.updated ?? 0,
+            deactivated: result.deactivated ?? 0,
             failed: result.failed ?? 0,
           },
         ),
@@ -65,6 +70,9 @@ export default function MembersCsvImportModal({
         withCloseButton: true,
         autoClose: 8000,
       });
+
+      await queryClient.invalidateQueries({ queryKey: ["workspaceMembers"] });
+      await queryClient.invalidateQueries({ queryKey: ["workspace"] });
     } catch (err) {
       notifications.update({
         id: "csv-import-members",
@@ -79,12 +87,16 @@ export default function MembersCsvImportModal({
     } finally {
       setIsImporting(false);
       setSelectedFile(null);
+      setStopOnError(false);
+      setDeactivateNotInCsv(false);
       if (resetRef.current) resetRef.current();
     }
   };
 
   const handleClose = () => {
     setSelectedFile(null);
+    setStopOnError(false);
+    setDeactivateNotInCsv(false);
     if (resetRef.current) resetRef.current();
     onClose();
   };
@@ -126,6 +138,20 @@ export default function MembersCsvImportModal({
               )}
             </FileButton>
           </Group>
+
+          <Checkbox
+            label={t("Stop on error (rollback all on failure)")}
+            checked={stopOnError}
+            onChange={(event) => setStopOnError(event.currentTarget.checked)}
+            mb="xs"
+          />
+
+          <Checkbox
+            label={t("Deactivate members not in CSV")}
+            checked={deactivateNotInCsv}
+            onChange={(event) => setDeactivateNotInCsv(event.currentTarget.checked)}
+            mb="md"
+          />
 
           <Divider my="sm" />
 

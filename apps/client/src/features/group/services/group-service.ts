@@ -77,9 +77,13 @@ export interface ICsvImportResult {
   errors?: Array<{ row: number; name?: string; reason: string }>;
 }
 
-export async function importGroupsCsv(file: File): Promise<ICsvImportResult> {
+export async function importGroupsCsv(
+  file: File,
+  stopOnError?: boolean,
+): Promise<ICsvImportResult> {
   const formData = new FormData();
   formData.append("file", file);
+  formData.append("stopOnError", String(stopOnError ?? false));
 
   const req = await api.post("/groups/import", formData, {
     headers: { "Content-Type": "multipart/form-data" },

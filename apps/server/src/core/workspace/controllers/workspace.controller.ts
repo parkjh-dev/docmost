@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   ForbiddenException,
@@ -8,6 +9,7 @@ import {
   Req,
   Res,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import { WorkspaceService } from '../services/workspace.service';
 import { UpdateWorkspaceDto } from '../dto/update-workspace.dto';
@@ -32,6 +34,8 @@ import {
 } from '../../casl/interfaces/workspace-ability.type';
 import { FastifyReply } from 'fastify';
 import { MembersCsvExportService } from '../services/members-csv-export.service';
+import { MembersCsvImportService } from '../services/members-csv-import.service';
+import { FileInterceptor } from '../../../common/interceptors/file.interceptor';
 import { EnvironmentService } from '../../../integrations/environment/environment.service';
 import { LicenseCheckService } from '../../../integrations/environment/license-check.service';
 import { CheckHostnameDto } from '../dto/check-hostname.dto';
@@ -47,6 +51,7 @@ export class WorkspaceController {
     private readonly workspaceAbility: WorkspaceAbilityFactory,
     private readonly workspaceRepo: WorkspaceRepo,
     private readonly membersCsvExportService: MembersCsvExportService,
+    private readonly membersCsvImportService: MembersCsvImportService,
     private environmentService: EnvironmentService,
     private licenseCheckService: LicenseCheckService,
   ) {}
@@ -149,13 +154,56 @@ export class WorkspaceController {
       body.includeGroups ?? true,
     );
 
-    const fileName = 'members.csv';
+    const now = new Date();
+    const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+    const fileName = `members_${timestamp}.csv`;
     res.headers({
       'Content-Type': 'text/csv; charset=utf-8',
       'Content-Disposition': `attachment; filename="${fileName}"`,
     });
 
     res.send(csv);
+  }
+
+  @UseInterceptors(FileInterceptor)
+  @HttpCode(HttpStatus.OK)
+  @Post('members/import')
+  async importMembersCsv(
+    @Req() req: any,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    const ability = this.workspaceAbility.createForUser(user, workspace);
+    if (
+      ability.cannot(WorkspaceCaslAction.Manage, WorkspaceCaslSubject.Member)
+    ) {
+      throw new ForbiddenException();
+    }
+
+    const file = await req.file({
+      limits: { fileSize: 10 * 1024 * 1024, fields: 4, files: 1 },
+    });
+
+    if (!file) {
+      throw new BadRequestException('Failed to upload file');
+    }
+
+    if (!file.filename.toLowerCase().endsWith('.csv')) {
+      throw new BadRequestException('Only CSV files are supported');
+    }
+
+    const buffer = await file.toBuffer();
+    const csvContent = buffer.toString('utf-8');
+
+    const stopOnError = file.fields?.stopOnError?.value === 'true';
+    const deactivateNotInCsv = file.fields?.deactivateNotInCsv?.value === 'true';
+
+    return this.membersCsvImportService.importMembersCsv(
+      csvContent,
+      workspace.id,
+      user.id,
+      { stopOnError, deactivateNotInCsv },
+    );
   }
 
   @HttpCode(HttpStatus.OK)

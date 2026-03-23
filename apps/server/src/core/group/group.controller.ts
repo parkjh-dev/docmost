@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Post,
   Body,
@@ -6,7 +7,9 @@ import {
   HttpCode,
   HttpStatus,
   ForbiddenException,
+  Req,
   Res,
+  UseInterceptors,
 } from '@nestjs/common';
 import { GroupService } from './services/group.service';
 import { CreateGroupDto } from './dto/create-group.dto';
@@ -21,7 +24,9 @@ import { UpdateGroupDto } from './dto/update-group.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { User, Workspace } from '@docmost/db/types/entity.types';
 import { GroupsCsvExportService } from './services/groups-csv-export.service';
+import { GroupsCsvImportService } from './services/groups-csv-import.service';
 import { FastifyReply } from 'fastify';
+import { FileInterceptor } from '../../common/interceptors/file.interceptor';
 import WorkspaceAbilityFactory from '../casl/abilities/workspace-ability.factory';
 import {
   WorkspaceCaslAction,
@@ -35,6 +40,7 @@ export class GroupController {
     private readonly groupService: GroupService,
     private readonly groupUserService: GroupUserService,
     private readonly groupsCsvExportService: GroupsCsvExportService,
+    private readonly groupsCsvImportService: GroupsCsvImportService,
     private readonly workspaceAbility: WorkspaceAbilityFactory,
   ) {}
 
@@ -83,13 +89,55 @@ export class GroupController {
 
     const csv = await this.groupsCsvExportService.exportGroupsCsv(workspace.id);
 
-    const fileName = 'groups.csv';
+    const now = new Date();
+    const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+    const fileName = `groups_${timestamp}.csv`;
     res.headers({
       'Content-Type': 'text/csv; charset=utf-8',
       'Content-Disposition': `attachment; filename="${fileName}"`,
     });
 
     res.send(csv);
+  }
+
+  @UseInterceptors(FileInterceptor)
+  @HttpCode(HttpStatus.OK)
+  @Post('import')
+  async importGroupsCsv(
+    @Req() req: any,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    const ability = this.workspaceAbility.createForUser(user, workspace);
+    if (
+      ability.cannot(WorkspaceCaslAction.Manage, WorkspaceCaslSubject.Group)
+    ) {
+      throw new ForbiddenException();
+    }
+
+    const file = await req.file({
+      limits: { fileSize: 10 * 1024 * 1024, fields: 4, files: 1 },
+    });
+
+    if (!file) {
+      throw new BadRequestException('Failed to upload file');
+    }
+
+    if (!file.filename.toLowerCase().endsWith('.csv')) {
+      throw new BadRequestException('Only CSV files are supported');
+    }
+
+    const buffer = await file.toBuffer();
+    const csvContent = buffer.toString('utf-8');
+
+    const stopOnError = file.fields?.stopOnError?.value === 'true';
+
+    return this.groupsCsvImportService.importGroupsCsv(
+      csvContent,
+      workspace.id,
+      user.id,
+      stopOnError,
+    );
   }
 
   @HttpCode(HttpStatus.OK)

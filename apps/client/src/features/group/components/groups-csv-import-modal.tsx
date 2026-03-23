@@ -1,5 +1,6 @@
 import {
   Button,
+  Checkbox,
   Divider,
   FileButton,
   Group,
@@ -11,6 +12,7 @@ import { notifications } from "@mantine/notifications";
 import { useTranslation } from "react-i18next";
 import { IconCheck, IconUpload, IconX } from "@tabler/icons-react";
 import { importGroupsCsv } from "@/features/group/services/group-service";
+import { queryClient } from "@/main.tsx";
 
 interface GroupsCsvImportModalProps {
   opened: boolean;
@@ -23,6 +25,7 @@ export default function GroupsCsvImportModal({
 }: GroupsCsvImportModalProps) {
   const { t } = useTranslation();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [stopOnError, setStopOnError] = useState<boolean>(false);
   const [isImporting, setIsImporting] = useState<boolean>(false);
   const resetRef = useRef<() => void>(null);
 
@@ -46,7 +49,7 @@ export default function GroupsCsvImportModal({
     });
 
     try {
-      const result = await importGroupsCsv(selectedFile);
+      const result = await importGroupsCsv(selectedFile, stopOnError);
 
       notifications.update({
         id: "csv-import-groups",
@@ -65,6 +68,8 @@ export default function GroupsCsvImportModal({
         withCloseButton: true,
         autoClose: 8000,
       });
+
+      await queryClient.invalidateQueries({ queryKey: ["groups"] });
     } catch (err) {
       notifications.update({
         id: "csv-import-groups",
@@ -79,12 +84,14 @@ export default function GroupsCsvImportModal({
     } finally {
       setIsImporting(false);
       setSelectedFile(null);
+      setStopOnError(false);
       if (resetRef.current) resetRef.current();
     }
   };
 
   const handleClose = () => {
     setSelectedFile(null);
+    setStopOnError(false);
     if (resetRef.current) resetRef.current();
     onClose();
   };
@@ -128,6 +135,13 @@ export default function GroupsCsvImportModal({
               )}
             </FileButton>
           </Group>
+
+          <Checkbox
+            label={t("Stop on error (rollback all on failure)")}
+            checked={stopOnError}
+            onChange={(event) => setStopOnError(event.currentTarget.checked)}
+            mb="md"
+          />
 
           <Divider my="sm" />
 
