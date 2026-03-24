@@ -153,12 +153,21 @@ export interface ICsvImportResult {
 
 export async function importMembersCsv(
   file: File,
-  options?: { stopOnError?: boolean; deactivateNotInCsv?: boolean },
+  options?: {
+    stopOnError?: boolean;
+    deactivateNotInCsv?: boolean;
+    importMode?: "invitation" | "password";
+    initialPassword?: string;
+  },
 ): Promise<ICsvImportResult> {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("stopOnError", String(options?.stopOnError ?? false));
   formData.append("deactivateNotInCsv", String(options?.deactivateNotInCsv ?? false));
+  formData.append("importMode", options?.importMode ?? "invitation");
+  if (options?.importMode === "password" && options?.initialPassword) {
+    formData.append("initialPassword", options.initialPassword);
+  }
 
   const req = await api.post("/workspace/members/import", formData, {
     headers: { "Content-Type": "multipart/form-data" },

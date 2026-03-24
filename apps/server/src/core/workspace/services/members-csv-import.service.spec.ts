@@ -1,4 +1,9 @@
 import { BadRequestException } from '@nestjs/common';
+
+jest.mock('./workspace-invitation.service', () => ({
+  WorkspaceInvitationService: jest.fn(),
+}));
+
 import { MembersCsvImportService } from './members-csv-import.service';
 
 describe('MembersCsvImportService', () => {
@@ -9,8 +14,9 @@ describe('MembersCsvImportService', () => {
   let mockGroupUserRepo: any;
 
   const workspaceId = 'workspace-1';
-  const actorId = 'actor-1';
-  const defaultOptions = { stopOnError: false, deactivateNotInCsv: false };
+  const actor = { id: 'actor-1', name: 'Actor' };
+  const hostname = undefined;
+  const defaultOptions = { stopOnError: false, deactivateNotInCsv: false, importMode: 'password' as const, initialPassword: 'testpass123' };
 
   beforeEach(() => {
     mockUserRepo = {
@@ -36,11 +42,16 @@ describe('MembersCsvImportService', () => {
       execute: jest.fn().mockResolvedValue([]),
     };
 
+    const mockInvitationService = {
+      sendInvitationMail: jest.fn().mockResolvedValue(undefined),
+    };
+
     service = new MembersCsvImportService(
       mockDb,
       mockUserRepo,
       mockGroupRepo,
       mockGroupUserRepo,
+      mockInvitationService as any,
     );
   });
 
@@ -48,42 +59,42 @@ describe('MembersCsvImportService', () => {
     it('should reject empty CSV', async () => {
       const csv = 'email,name,role,groups\n';
       await expect(
-        service.importMembersCsv(csv, workspaceId, actorId, defaultOptions),
+        service.importMembersCsv(csv, workspaceId, actor, hostname, defaultOptions),
       ).rejects.toThrow(BadRequestException);
     });
 
     it('should reject CSV without email column', async () => {
       const csv = 'name,role\nAlice,admin\n';
       await expect(
-        service.importMembersCsv(csv, workspaceId, actorId, defaultOptions),
+        service.importMembersCsv(csv, workspaceId, actor, hostname, defaultOptions),
       ).rejects.toThrow('CSV must contain an "email" column');
     });
 
     it('should reject group CSV uploaded to members import (no email column)', async () => {
       const csv = 'name,description,members\nEngineering,team,alice@test.com\n';
       await expect(
-        service.importMembersCsv(csv, workspaceId, actorId, defaultOptions),
+        service.importMembersCsv(csv, workspaceId, actor, hostname, defaultOptions),
       ).rejects.toThrow('CSV must contain an "email" column');
     });
 
     it('should reject group CSV with members column even if email exists', async () => {
       const csv = 'email,name,members\nalice@test.com,Alice,bob@test.com\n';
       await expect(
-        service.importMembersCsv(csv, workspaceId, actorId, defaultOptions),
+        service.importMembersCsv(csv, workspaceId, actor, hostname, defaultOptions),
       ).rejects.toThrow('This looks like a groups CSV');
     });
 
     it('should reject duplicate emails within CSV', async () => {
       const csv = 'email,name,role\nalice@test.com,Alice,admin\nalice@test.com,Alice2,member\n';
       await expect(
-        service.importMembersCsv(csv, workspaceId, actorId, defaultOptions),
+        service.importMembersCsv(csv, workspaceId, actor, hostname, defaultOptions),
       ).rejects.toThrow('Duplicate emails found in CSV');
     });
 
     it('should reject invalid email format', async () => {
       const csv = 'email,name,role\nbad-email,Alice,member\n';
       const result = await service.importMembersCsv(
-        csv, workspaceId, actorId, defaultOptions,
+        csv, workspaceId, actor, hostname, defaultOptions,
       );
       expect(result.failed).toBe(1);
       expect(result.errors[0].reason).toBe('Invalid email format');
@@ -92,7 +103,7 @@ describe('MembersCsvImportService', () => {
     it('should reject invalid role', async () => {
       const csv = 'email,name,role\nalice@test.com,Alice,superadmin\n';
       const result = await service.importMembersCsv(
-        csv, workspaceId, actorId, defaultOptions,
+        csv, workspaceId, actor, hostname, defaultOptions,
       );
       expect(result.failed).toBe(1);
       expect(result.errors[0].reason).toContain('Invalid role');
@@ -101,7 +112,7 @@ describe('MembersCsvImportService', () => {
     it('should reject empty email', async () => {
       const csv = 'email,name,role\n,Alice,member\n';
       const result = await service.importMembersCsv(
-        csv, workspaceId, actorId, defaultOptions,
+        csv, workspaceId, actor, hostname, defaultOptions,
       );
       expect(result.failed).toBe(1);
       expect(result.errors[0].reason).toBe('Email is required');
@@ -112,7 +123,7 @@ describe('MembersCsvImportService', () => {
     it('should handle valid CSV with all columns', async () => {
       const csv = 'email,name,role,groups\nalice@test.com,Alice,admin,Engineering;Design\n';
       const result = await service.importMembersCsv(
-        csv, workspaceId, actorId, defaultOptions,
+        csv, workspaceId, actor, hostname, defaultOptions,
       );
       expect(result.total).toBe(1);
       expect(result.created).toBe(1);
@@ -122,7 +133,7 @@ describe('MembersCsvImportService', () => {
     it('should handle CSV with only email column', async () => {
       const csv = 'email\nalice@test.com\n';
       const result = await service.importMembersCsv(
-        csv, workspaceId, actorId, defaultOptions,
+        csv, workspaceId, actor, hostname, defaultOptions,
       );
       expect(result.created).toBe(1);
     });
@@ -130,7 +141,7 @@ describe('MembersCsvImportService', () => {
     it('should handle empty groups field', async () => {
       const csv = 'email,name,role,groups\nalice@test.com,Alice,member,\n';
       const result = await service.importMembersCsv(
-        csv, workspaceId, actorId, defaultOptions,
+        csv, workspaceId, actor, hostname, defaultOptions,
       );
       expect(result.created).toBe(1);
     });
@@ -138,7 +149,7 @@ describe('MembersCsvImportService', () => {
     it('should default role to member when empty', async () => {
       const csv = 'email,name,role\nalice@test.com,Alice,\n';
       const result = await service.importMembersCsv(
-        csv, workspaceId, actorId, defaultOptions,
+        csv, workspaceId, actor, hostname, defaultOptions,
       );
       expect(result.created).toBe(1);
       expect(mockUserRepo.insertUser).toHaveBeenCalledWith(
@@ -150,7 +161,7 @@ describe('MembersCsvImportService', () => {
     it('should handle UTF-8 BOM', async () => {
       const csv = '\uFEFFemail,name,role\nalice@test.com,Alice,member\n';
       const result = await service.importMembersCsv(
-        csv, workspaceId, actorId, defaultOptions,
+        csv, workspaceId, actor, hostname, defaultOptions,
       );
       expect(result.created).toBe(1);
     });
@@ -164,7 +175,7 @@ describe('MembersCsvImportService', () => {
       ].join('\n');
 
       const result = await service.importMembersCsv(
-        csv, workspaceId, actorId, defaultOptions,
+        csv, workspaceId, actor, hostname, defaultOptions,
       );
       expect(result.total).toBe(3);
       expect(result.created).toBe(3);
@@ -181,7 +192,7 @@ describe('MembersCsvImportService', () => {
 
       const csv = 'email,name,role\nalice@test.com,New Name,admin\n';
       const result = await service.importMembersCsv(
-        csv, workspaceId, actorId, defaultOptions,
+        csv, workspaceId, actor, hostname, defaultOptions,
       );
       expect(result.updated).toBe(1);
       expect(result.created).toBe(0);
@@ -196,7 +207,7 @@ describe('MembersCsvImportService', () => {
 
       const csv = 'email,name,role\nowner@test.com,Owner Updated,member\n';
       const result = await service.importMembersCsv(
-        csv, workspaceId, actorId, defaultOptions,
+        csv, workspaceId, actor, hostname, defaultOptions,
       );
       expect(result.updated).toBe(1);
       // updateUser should be called with name only, not role
@@ -209,9 +220,11 @@ describe('MembersCsvImportService', () => {
     it('should throw on first validation error when stopOnError is true', async () => {
       const csv = 'email,name,role\nbad-email,Alice,member\n';
       await expect(
-        service.importMembersCsv(csv, workspaceId, actorId, {
+        service.importMembersCsv(csv, workspaceId, actor, hostname, {
           stopOnError: true,
           deactivateNotInCsv: false,
+          importMode: 'password',
+          initialPassword: 'testpass123',
         }),
       ).rejects.toThrow(BadRequestException);
     });
@@ -224,7 +237,7 @@ describe('MembersCsvImportService', () => {
       ].join('\n');
 
       const result = await service.importMembersCsv(
-        csv, workspaceId, actorId, defaultOptions,
+        csv, workspaceId, actor, hostname, defaultOptions,
       );
       expect(result.failed).toBe(1);
       expect(result.created).toBe(1);

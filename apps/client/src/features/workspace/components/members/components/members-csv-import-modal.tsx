@@ -5,6 +5,9 @@ import {
   FileButton,
   Group,
   Modal,
+  PasswordInput,
+  Radio,
+  Stack,
   Text,
 } from "@mantine/core";
 import { useRef, useState } from "react";
@@ -13,6 +16,8 @@ import { useTranslation } from "react-i18next";
 import { IconCheck, IconDownload, IconUpload, IconX } from "@tabler/icons-react";
 import { importMembersCsv } from "@/features/workspace/services/workspace-service";
 import { queryClient } from "@/main.tsx";
+
+type ImportMode = "invitation" | "password";
 
 interface MembersCsvImportModalProps {
   opened: boolean;
@@ -25,6 +30,8 @@ export default function MembersCsvImportModal({
 }: MembersCsvImportModalProps) {
   const { t } = useTranslation();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [importMode, setImportMode] = useState<ImportMode>("invitation");
+  const [initialPassword, setInitialPassword] = useState<string>("");
   const [stopOnError, setStopOnError] = useState<boolean>(false);
   const [deactivateNotInCsv, setDeactivateNotInCsv] = useState<boolean>(false);
   const [isImporting, setIsImporting] = useState<boolean>(false);
@@ -34,8 +41,12 @@ export default function MembersCsvImportModal({
     setSelectedFile(file);
   };
 
+  const isImportDisabled =
+    !selectedFile ||
+    (importMode === "password" && initialPassword.length < 8);
+
   const handleImport = async () => {
-    if (!selectedFile) return;
+    if (isImportDisabled) return;
 
     setIsImporting(true);
     handleClose();
@@ -50,7 +61,12 @@ export default function MembersCsvImportModal({
     });
 
     try {
-      const result = await importMembersCsv(selectedFile, { stopOnError, deactivateNotInCsv });
+      const result = await importMembersCsv(selectedFile, {
+        stopOnError,
+        deactivateNotInCsv,
+        importMode,
+        initialPassword: importMode === "password" ? initialPassword : undefined,
+      });
 
       notifications.update({
         id: "csv-import-members",
@@ -86,17 +102,21 @@ export default function MembersCsvImportModal({
       });
     } finally {
       setIsImporting(false);
-      setSelectedFile(null);
-      setStopOnError(false);
-      setDeactivateNotInCsv(false);
+      resetState();
       if (resetRef.current) resetRef.current();
     }
   };
 
-  const handleClose = () => {
+  const resetState = () => {
     setSelectedFile(null);
+    setImportMode("invitation");
+    setInitialPassword("");
     setStopOnError(false);
     setDeactivateNotInCsv(false);
+  };
+
+  const handleClose = () => {
+    resetState();
     if (resetRef.current) resetRef.current();
     onClose();
   };
@@ -152,6 +172,36 @@ export default function MembersCsvImportModal({
             </Button>
           </Group>
 
+          <Text size="sm" fw={500} mb="xs">
+            {t("Import mode")}
+          </Text>
+
+          <Radio.Group
+            value={importMode}
+            onChange={(value) => setImportMode(value as ImportMode)}
+            mb="md"
+          >
+            <Stack gap="xs">
+              <Radio
+                value="invitation"
+                label={t("Send invitation email")}
+              />
+              <Radio
+                value="password"
+                label={t("Set initial password")}
+              />
+            </Stack>
+          </Radio.Group>
+
+          {importMode === "password" && (
+            <PasswordInput
+              placeholder={t("Minimum 8 characters")}
+              value={initialPassword}
+              onChange={(event) => setInitialPassword(event.currentTarget.value)}
+              mb="md"
+            />
+          )}
+
           <Checkbox
             label={t("Stop on error (rollback all on failure)")}
             checked={stopOnError}
@@ -175,7 +225,7 @@ export default function MembersCsvImportModal({
             <Button
               onClick={handleImport}
               loading={isImporting}
-              disabled={!selectedFile}
+              disabled={isImportDisabled}
             >
               {t("Import")}
             </Button>

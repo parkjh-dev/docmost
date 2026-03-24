@@ -11,10 +11,14 @@ import { GroupUserRepo } from '@docmost/db/repos/group/group-user.repo';
 import { executeTx } from '@docmost/db/utils';
 import { parse } from 'csv-parse/sync';
 import { randomBytes } from 'crypto';
+import { WorkspaceInvitationService } from './workspace-invitation.service';
+import { nanoIdGen } from '../../../common/helpers';
 
 export interface CsvImportOptions {
   stopOnError: boolean;
   deactivateNotInCsv: boolean;
+  importMode: 'invitation' | 'password';
+  initialPassword?: string;
 }
 
 export interface CsvImportResult {
@@ -42,12 +46,14 @@ export class MembersCsvImportService {
     private readonly userRepo: UserRepo,
     private readonly groupRepo: GroupRepo,
     private readonly groupUserRepo: GroupUserRepo,
+    private readonly workspaceInvitationService: WorkspaceInvitationService,
   ) {}
 
   async importMembersCsv(
     csvContent: string,
     workspaceId: string,
-    actorId: string,
+    actor: { id: string; name: string },
+    hostname: string | undefined,
     options: CsvImportOptions,
   ): Promise<CsvImportResult> {
     const records = this.parseCsv(csvContent);
@@ -63,9 +69,9 @@ export class MembersCsvImportService {
     };
 
     if (options.stopOnError) {
-      await this.processWithRollback(records, workspaceId, actorId, options, result);
+      await this.processWithRollback(records, workspaceId, actor, hostname, options, result);
     } else {
-      await this.processPartial(records, workspaceId, actorId, options, result);
+      await this.processPartial(records, workspaceId, actor, hostname, options, result);
     }
 
     return result;
@@ -177,7 +183,8 @@ export class MembersCsvImportService {
   private async processWithRollback(
     records: Record<string, string>[],
     workspaceId: string,
-    actorId: string,
+    actor: { id: string; name: string },
+    hostname: string | undefined,
     options: CsvImportOptions,
     result: CsvImportResult,
   ) {
@@ -194,7 +201,7 @@ export class MembersCsvImportService {
       const data = await this.preloadData(workspaceId, trx);
 
       for (let i = 0; i < records.length; i++) {
-        await this.processRow(records[i], i + 2, workspaceId, result, trx, data);
+        await this.processRow(records[i], i + 2, workspaceId, actor, hostname, options, result, trx, data);
         if (result.failed > 0) {
           throw new BadRequestException(
             `Row ${result.errors[0].row}: ${result.errors[0].reason}`,
@@ -203,7 +210,7 @@ export class MembersCsvImportService {
       }
 
       if (options.deactivateNotInCsv) {
-        await this.deactivateUsersNotInCsv(records, workspaceId, actorId, result, trx);
+        await this.deactivateUsersNotInCsv(records, workspaceId, actor.id, result, trx);
       }
     });
   }
@@ -211,7 +218,8 @@ export class MembersCsvImportService {
   private async processPartial(
     records: Record<string, string>[],
     workspaceId: string,
-    actorId: string,
+    actor: { id: string; name: string },
+    hostname: string | undefined,
     options: CsvImportOptions,
     result: CsvImportResult,
   ) {
@@ -232,7 +240,7 @@ export class MembersCsvImportService {
 
       try {
         await executeTx(this.db, async (trx) => {
-          await this.processRow(records[i], i + 2, workspaceId, result, trx, data);
+          await this.processRow(records[i], i + 2, workspaceId, actor, hostname, options, result, trx, data);
         });
       } catch (err: any) {
         result.failed++;
@@ -246,7 +254,7 @@ export class MembersCsvImportService {
 
     if (options.deactivateNotInCsv) {
       await executeTx(this.db, async (trx) => {
-        await this.deactivateUsersNotInCsv(records, workspaceId, actorId, result, trx);
+        await this.deactivateUsersNotInCsv(records, workspaceId, actor.id, result, trx);
       });
     }
   }
@@ -255,6 +263,9 @@ export class MembersCsvImportService {
     row: Record<string, string>,
     rowNumber: number,
     workspaceId: string,
+    actor: { id: string; name: string },
+    hostname: string | undefined,
+    options: CsvImportOptions,
     result: CsvImportResult,
     trx: any,
     data: PreloadedData,
@@ -296,8 +307,42 @@ export class MembersCsvImportService {
       return;
     }
 
-    // Create new user
-    const password = randomBytes(16).toString('hex');
+    if (options.importMode === 'invitation') {
+      // Invitation mode: create invitation record and send email
+      const token = nanoIdGen(16);
+      const groupIds = groupNames
+        .map((g) => data.groupsByName.get(g.toLowerCase())?.id)
+        .filter(Boolean) as string[];
+
+      const [invitation] = await trx
+        .insertInto('workspaceInvitations')
+        .values({
+          email,
+          role,
+          token,
+          workspaceId,
+          invitedById: actor.id,
+          groupIds,
+        })
+        .onConflict((oc) => oc.columns(['email', 'workspaceId']).doNothing())
+        .returningAll()
+        .execute();
+
+      if (invitation) {
+        await this.workspaceInvitationService.sendInvitationMail(
+          invitation.id,
+          email,
+          token,
+          actor.name,
+          hostname,
+        );
+        result.created++;
+      }
+      return;
+    }
+
+    // Password mode: create user with initial password
+    const password = options.initialPassword || randomBytes(16).toString('hex');
     const newUser = await this.userRepo.insertUser(
       {
         email,
@@ -314,23 +359,32 @@ export class MembersCsvImportService {
     data.usersByEmail.set(email, { id: newUser.id, name, role });
 
     // Add to default group
-    if (data.defaultGroupId) {
-      const key = `${newUser.id}:${data.defaultGroupId}`;
-      if (!data.groupUserSet.has(key)) {
-        await this.groupUserRepo.insertGroupUser(
-          { userId: newUser.id, groupId: data.defaultGroupId },
-          trx,
-        );
-        data.groupUserSet.add(key);
-      }
-    } else {
-      await this.groupUserRepo.addUserToDefaultGroup(newUser.id, workspaceId, trx);
-    }
+    await this.addToDefaultGroup(newUser.id, workspaceId, trx, data);
 
     // Add to specified groups
     await this.syncUserGroups(newUser.id, groupNames, trx, data);
 
     result.created++;
+  }
+
+  private async addToDefaultGroup(
+    userId: string,
+    workspaceId: string,
+    trx: any,
+    data: PreloadedData,
+  ) {
+    if (data.defaultGroupId) {
+      const key = `${userId}:${data.defaultGroupId}`;
+      if (!data.groupUserSet.has(key)) {
+        await this.groupUserRepo.insertGroupUser(
+          { userId, groupId: data.defaultGroupId },
+          trx,
+        );
+        data.groupUserSet.add(key);
+      }
+    } else {
+      await this.groupUserRepo.addUserToDefaultGroup(userId, workspaceId, trx);
+    }
   }
 
   private async syncUserGroups(

@@ -197,12 +197,15 @@ export class WorkspaceController {
 
     const stopOnError = file.fields?.stopOnError?.value === 'true';
     const deactivateNotInCsv = file.fields?.deactivateNotInCsv?.value === 'true';
+    const importMode = file.fields?.importMode?.value === 'password' ? 'password' : 'invitation';
+    const initialPassword = file.fields?.initialPassword?.value || undefined;
 
     return this.membersCsvImportService.importMembersCsv(
       csvContent,
       workspace.id,
-      user.id,
-      { stopOnError, deactivateNotInCsv },
+      { id: user.id, name: user.name },
+      workspace.hostname,
+      { stopOnError, deactivateNotInCsv, importMode, initialPassword },
     );
   }
 
